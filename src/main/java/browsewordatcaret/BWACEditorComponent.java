@@ -35,11 +35,15 @@ import com.intellij.openapi.editor.markup.HighlighterTargetArea;
 import com.intellij.openapi.editor.markup.RangeHighlighter;
 import com.intellij.openapi.editor.markup.TextAttributes;
 import com.intellij.openapi.keymap.KeymapUtil;
+import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.JDOMUtil;
 import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.TextRange;
 import com.intellij.openapi.util.text.StringUtil;
+import com.intellij.psi.PsiDocumentManager;
+import com.intellij.psi.PsiFile;
 import com.intellij.ui.LightweightHint;
+import com.intellij.lang.Language;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -73,6 +77,23 @@ public class BWACEditorComponent implements SelectionListener, CaretListener, Do
         editor.getDocument().addDocumentListener(this);
     }
 
+    /**
+     * PHP treats '$' as a sigil (e.g. "$status") while property access uses "->status".
+     * For PHP files we therefore need BWACUtils to treat '$' as a separator.
+     */
+    private boolean isPhpFile() {
+        Project project = editor.getProject();
+        if (project == null) {
+            return false;
+        }
+        PsiFile psiFile = PsiDocumentManager.getInstance(project).getPsiFile(editor.getDocument());
+        if (psiFile == null) {
+            return false;
+        }
+        Language lang = psiFile.getLanguage();
+        return lang != null && "PHP".equals(lang.getID());
+    }
+
     public void dispose() {
 //        clearHighlighters();
         editor.getSelectionModel().removeSelectionListener(this);
@@ -101,13 +122,28 @@ public class BWACEditorComponent implements SelectionListener, CaretListener, Do
         String text = editor.getDocument().getText();
         TextRange textRange = selectionEvent.getNewRange();
 
+        final boolean phpMode = isPhpFile();
+
         final boolean checkHumpBound = BWACApplicationService.getService().getState().humpBound;
 
         // aufgrund selektiertem Text erstellen
         final String highlightText;
-        if ((textRange.getStartOffset() != 0 || textRange.getEndOffset() != text.length()) && // fix issue 5: komplettem text ausschliessen
-                BWACUtils.isStartEnd(text, textRange.getStartOffset(), textRange.getEndOffset(), false, checkHumpBound)) {
-            highlightText = textRange.substring(text);
+        if ((textRange.getStartOffset() != 0 || textRange.getEndOffset() != text.length())) { // fix issue 5: komplettem text ausschliessen
+            int start = textRange.getStartOffset();
+            int end = textRange.getEndOffset();
+
+            // Normal case: selection is already a whole word.
+            if (BWACUtils.isStartEnd(text, start, end, false, checkHumpBound, phpMode)) {
+                highlightText = textRange.substring(text);
+            }
+            // PHP special case: allow selecting "$foo" and normalize to "foo".
+            else if (phpMode && start < end && text.charAt(start) == '$' && start + 1 < end
+                    && BWACUtils.isStartEnd(text, start + 1, end, false, checkHumpBound, phpMode)) {
+                highlightText = text.substring(start + 1, end);
+            }
+            else {
+                highlightText = null; // ansonsten löschen
+            }
         } else {
             highlightText = null; // ansonsten löschen
         }
@@ -136,7 +172,7 @@ public class BWACEditorComponent implements SelectionListener, CaretListener, Do
         final String wordToHighlight;
         if (autoHighlight && !editor.getSelectionModel().hasSelection()) {
             int currentOffset = editor.getCaretModel().getOffset();
-            wordToHighlight = BWACUtils.extractWordFrom(editor.getDocument().getText(), currentOffset);
+            wordToHighlight = BWACUtils.extractWordFrom(editor.getDocument().getText(), currentOffset, isPhpFile());
         } else {
             wordToHighlight = null;
         }
@@ -183,7 +219,7 @@ public class BWACEditorComponent implements SelectionListener, CaretListener, Do
                         // wenn noch keine RangeHighlights vorhanden ->
                         if (items.isEmpty() || caretChangedDelayTimer.isRunning()) {
                             // aktuelles Wort unter dem Cursor nehmen...
-                            String currentWord = BWACUtils.extractWordFrom(editor.getDocument().getText(), editor.getCaretModel().getOffset());
+                            String currentWord = BWACUtils.extractWordFrom(editor.getDocument().getText(), editor.getCaretModel().getOffset(), isPhpFile());
                             if (currentWord == null) {
                                 return; // kein wort -> nichts zu machen
                             }
@@ -293,6 +329,7 @@ public class BWACEditorComponent implements SelectionListener, CaretListener, Do
     private void buildHighlighters(final String highlightText, boolean checkHumpBound) {
         ApplicationManager.getApplication().assertIsDispatchThread();
         synchronized (items) {
+            final boolean phpMode = isPhpFile();
             // aktuelle löschen
             final MarkupModelEx markupModel = (MarkupModelEx) editor.getMarkupModel();
             for (RangeHighlighter rangeHighlighter : items) {
@@ -312,7 +349,7 @@ public class BWACEditorComponent implements SelectionListener, CaretListener, Do
                 do {
                     index = text.indexOf(highlightText, index + 1);
                     // wenn gefunden und ganzes wort -> aufnehmen
-                    if (index >= 0 && BWACUtils.isStartEnd(text, index, index + highlightText.length(), true, checkHumpBound)) {
+                    if (index >= 0 && BWACUtils.isStartEnd(text, index, index + highlightText.length(), true, checkHumpBound, phpMode)) {
                         RangeHighlighter rangeHighlighter = markupModel.addRangeHighlighter(index, index + highlightText.length(), HIGHLIGHTLAYER, textAttributes, HighlighterTargetArea.EXACT_RANGE);
                         rangeHighlighter.setErrorStripeTooltip(highlightText);
                         items.add(rangeHighlighter);
