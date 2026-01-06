@@ -24,20 +24,55 @@ public final class BWACUtils {
     }
 
     /**
+     * Determines whether a character should be treated as part of a "word".
+     *
+     * <p>The original logic relied on {@link Character#isJavaIdentifierPart(char)} which treats
+     * '$' as a valid identifier character. That works for Java, but breaks PHP navigation:
+     * in PHP, the declaration uses <code>$status</code> while property access uses
+     * <code>->status</code>. For PHP we want '$' to be a separator (a sigil), not part of the word.
+     */
+    private static boolean isWordChar(char c, boolean phpMode) {
+        if (phpMode && c == '$') {
+            return false;
+        }
+        return Character.isJavaIdentifierPart(c);
+    }
+
+    /**
      * Liefert das Wort aus dem Text gem. index
      */
     @Nullable
     public static String extractWordFrom(@NotNull String text, int index) {
+        return extractWordFrom(text, index, false);
+    }
+
+    /**
+     * Extracts a word from text at the given index.
+     *
+     * @param phpMode when true, treats '$' as a separator (PHP sigil) so "$status" and "status"
+     *                are considered the same word.
+     */
+    @Nullable
+    public static String extractWordFrom(@NotNull String text, int index, boolean phpMode) {
         int length = text.length();
         if (length <= 0 || index < 0 || index > length) {
             return null;
         }
+
+        // PHP quality-of-life: if caret sits on '$', treat the word as the identifier after it.
+        if (phpMode && index < length && text.charAt(index) == '$') {
+            index++;
+            if (index > length) {
+                return null;
+            }
+        }
+
         int begin = index;
-        while (begin > 0 && Character.isJavaIdentifierPart(text.charAt(begin - 1))) {
+        while (begin > 0 && isWordChar(text.charAt(begin - 1), phpMode)) {
             begin--;
         }
         int end = index;
-        while (end < length && Character.isJavaIdentifierPart(text.charAt(end))) {
+        while (end < length && isWordChar(text.charAt(end), phpMode)) {
             end++;
         }
         if (end <= begin || (begin == 0 && end == length) ) {
@@ -50,25 +85,34 @@ public final class BWACUtils {
      * Prüft, ob bei begin/end ein Wort beginnt und endet.
      */
     public static boolean isStartEnd(@NotNull final String text, final int begin, final int end, boolean checkOnlyPreviousNext, boolean checkHumpBound) {
+        return isStartEnd(text, begin, end, checkOnlyPreviousNext, checkHumpBound, false);
+    }
+
+    /**
+     * Prüft, ob bei begin/end ein Wort beginnt und endet.
+     *
+     * @param phpMode when true, treats '$' as a separator (PHP sigil).
+     */
+    public static boolean isStartEnd(@NotNull final String text, final int begin, final int end, boolean checkOnlyPreviousNext, boolean checkHumpBound, boolean phpMode) {
         int length = text.length();
         if (length == 0 || begin < 0 || begin >= length || end <= 0 || end > length) {
             return false;
         }
         // previous char
-        if (begin != 0 && Character.isJavaIdentifierPart(text.charAt(begin - 1))) {
+        if (begin != 0 && isWordChar(text.charAt(begin - 1), phpMode)) {
             if (!checkHumpBound || !EditorActionUtil.isHumpBound(text, begin, true)) {
                 return false;
             }
         }
         // next char
-        if (end != length && Character.isJavaIdentifierPart(text.charAt(end))) {
+        if (end != length && isWordChar(text.charAt(end), phpMode)) {
             if (!checkHumpBound || !EditorActionUtil.isHumpBound(text, end, false)) {
                 return false;
             }
         }
         // first/last char from text
         if (!checkOnlyPreviousNext) {
-            if (!Character.isJavaIdentifierPart(text.charAt(begin)) || !Character.isJavaIdentifierPart(text.charAt(end - 1))) {
+            if (!isWordChar(text.charAt(begin), phpMode) || !isWordChar(text.charAt(end - 1), phpMode)) {
                 return false;
             }
         }
