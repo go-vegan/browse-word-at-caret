@@ -49,6 +49,19 @@ public class BWACUtilsTest {
         assertNull(BWACUtils.extractWordFrom("foo  bar baz", 13));
 
         assertNull(BWACUtils.extractWordFrom("foobar", 2)); // fix issue 5: komplettem text ausschliessen
+
+        // PHP mode: "$status" and "status" should normalize to the same extracted word.
+        assertEquals("status", BWACUtils.extractWordFrom("$status", 1, true));
+        assertEquals("status", BWACUtils.extractWordFrom("$status", 0, true)); // caret on '$'
+        assertEquals("status", BWACUtils.extractWordFrom("$this->status", 7, true));
+    }
+
+    @Test
+    public void testIsStartEndPhpMode() throws Exception {
+        String php = "public $status; $this->status = true;";
+        // should treat the 'status' in '$status' as a standalone word when searching for "status".
+        int decl = php.indexOf("status");
+        assertTrue(BWACUtils.isStartEnd(php, decl, decl + "status".length(), true, false, true));
     }
 
     @Test
